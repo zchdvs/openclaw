@@ -27,6 +27,7 @@ import ai.openclaw.app.node.DEFAULT_SEAM_COLOR_ARGB
 import ai.openclaw.app.node.DebugHandler
 import ai.openclaw.app.node.DeviceHandler
 import ai.openclaw.app.node.DeviceNotificationListenerService
+import ai.openclaw.app.node.GatewayEventHandler
 import ai.openclaw.app.node.InvokeDispatcher
 import ai.openclaw.app.node.LocationCaptureManager
 import ai.openclaw.app.node.LocationHandler
@@ -48,6 +49,7 @@ import ai.openclaw.app.voice.MicCaptureManager
 import ai.openclaw.app.voice.TalkModeManager
 import ai.openclaw.app.voice.VoiceConversationEntry
 import ai.openclaw.app.voice.VoiceConversationRole
+import ai.openclaw.app.voice.VoiceWakeManager
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -215,7 +217,7 @@ class NodeRuntime(
       prefs = prefs,
       cameraEnabled = { cameraEnabled.value },
       locationMode = { locationMode.value },
-      voiceWakeMode = { VoiceWakeMode.Off },
+      voiceWakeMode = { prefs.voiceWakeMode.value },
       motionActivityAvailable = { motionHandler.isActivityAvailable() },
       motionPedometerAvailable = { motionHandler.isPedometerAvailable() },
       sendSmsAvailable = { SensitiveFeatureConfig.smsEnabled && sms.canSendSms() },
@@ -447,6 +449,7 @@ class NodeRuntime(
           if (voiceReplySpeakerLazy.isInitialized()) {
             voiceReplySpeaker.refreshConfig()
           }
+          gatewayEventHandler.refreshWakeWordsFromGateway()
         }
       },
       onDisconnected = { message ->
@@ -679,6 +682,73 @@ class NodeRuntime(
 
   val talkModeConversation: StateFlow<List<VoiceConversationEntry>>
     get() = talkMode.conversation
+
+  private val voiceWake: VoiceWakeManager by lazy {
+    VoiceWakeManager(
+      context = appContext,
+      scope = scope,
+      onCommand = { command -> dispatchVoiceWakeCommand(command) },
+    ).also { it.setTriggerWords(prefs.wakeWords.value) }
+  }
+
+  private val gatewayEventHandler: GatewayEventHandler by lazy {
+    GatewayEventHandler(
+      scope = scope,
+      prefs = prefs,
+      json = json,
+      operatorSession = operatorSession,
+      isConnected = { _isConnected.value },
+    )
+  }
+
+  private val _voiceWakeEnabled = MutableStateFlow(prefs.voiceWakeMode.value != VoiceWakeMode.Off)
+  val voiceWakeEnabled: StateFlow<Boolean> = _voiceWakeEnabled.asStateFlow()
+
+  val voiceWakeListening: StateFlow<Boolean>
+    get() = voiceWake.isListening
+
+  val voiceWakeStatusText: StateFlow<String>
+    get() = voiceWake.statusText
+
+  /** Enables foreground wake-word listening (or disables it) and persists the choice. */
+  fun setVoiceWakeEnabled(value: Boolean) {
+    prefs.setVoiceWakeMode(if (value) VoiceWakeMode.Foreground else VoiceWakeMode.Off)
+    _voiceWakeEnabled.value = value
+    if (value) gatewayEventHandler.scheduleWakeWordsSyncIfNeeded()
+    refreshVoiceWakeListening()
+  }
+
+  /**
+   * Starts or stops wake-word listening based on the saved mode, foreground state, the active
+   * capture mode, and microphone permission. Wake listening pauses whenever Talk or dictation hold
+   * the microphone so the two recognizers do not fight over the audio tap.
+   */
+  private fun refreshVoiceWakeListening() {
+    val shouldListen =
+      prefs.voiceWakeMode.value != VoiceWakeMode.Off &&
+        _isForeground.value &&
+        _voiceCaptureMode.value == VoiceCaptureMode.Off &&
+        hasRecordAudioPermission()
+    if (shouldListen) {
+      voiceWake.setTriggerWords(prefs.wakeWords.value)
+      voiceWake.start()
+    } else {
+      voiceWake.stop()
+    }
+  }
+
+  /** Mirrors the iOS path: forwards a wake-triggered command to the gateway main session. */
+  private suspend fun dispatchVoiceWakeCommand(command: String) {
+    val text = command.trim()
+    if (text.isEmpty()) return
+    if (!_nodeConnected.value) return
+    val payload =
+      buildJsonObject {
+        put("text", JsonPrimitive(text))
+        put("sessionKey", JsonPrimitive(resolveMainSessionKey()))
+      }.toString()
+    nodeSession.sendNodeEvent(event = "voice.transcript", payloadJson = payload)
+  }
 
   private fun syncMainSessionKey(agentId: String?) {
     val resolvedKey = resolveNodeMainSessionKey(agentId)
@@ -935,8 +1005,14 @@ class NodeRuntime(
   val pendingRunCount: StateFlow<Int> = chat.pendingRunCount
 
   init {
-    if (prefs.voiceWakeMode.value != VoiceWakeMode.Off) {
-      prefs.setVoiceWakeMode(VoiceWakeMode.Off)
+    refreshVoiceWakeListening()
+
+    scope.launch {
+      prefs.wakeWords.collect { words -> voiceWake.setTriggerWords(words) }
+    }
+
+    scope.launch {
+      voiceCaptureMode.collect { refreshVoiceWakeListening() }
     }
 
     scope.launch {
@@ -982,6 +1058,7 @@ class NodeRuntime(
       stopManualVoiceSession()
       publishNodePresenceAliveBeacon(NodePresenceAliveBeacon.Trigger.Background, throttleRecentSuccess = true)
     }
+    refreshVoiceWakeListening()
   }
 
   private fun publishNodePresenceAliveBeacon(
@@ -1802,6 +1879,9 @@ class NodeRuntime(
   ) {
     if (event == "update.available") {
       _gatewayUpdateAvailable.value = parseGatewayUpdateAvailable(payloadJson)
+    }
+    if (event == "voicewake.changed") {
+      gatewayEventHandler.handleVoiceWakeChangedEvent(payloadJson)
     }
     micCapture.handleGatewayEvent(event, payloadJson)
     talkMode.handleGatewayEvent(event, payloadJson)

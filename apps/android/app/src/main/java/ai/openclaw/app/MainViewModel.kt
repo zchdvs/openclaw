@@ -190,6 +190,9 @@ class MainViewModel(
   val talkModeStatusText: StateFlow<String> = runtimeState(initial = "Off") { it.talkModeStatusText }
   val talkModeConversation: StateFlow<List<VoiceConversationEntry>> =
     runtimeState(initial = emptyList()) { it.talkModeConversation }
+  val voiceWakeEnabled: StateFlow<Boolean> = runtimeState(initial = false) { it.voiceWakeEnabled }
+  val voiceWakeListening: StateFlow<Boolean> = runtimeState(initial = false) { it.voiceWakeListening }
+  val voiceWakeStatusText: StateFlow<String> = runtimeState(initial = "Off") { it.voiceWakeStatusText }
 
   val chatSessionKey: StateFlow<String> = runtimeState(initial = "main") { it.chatSessionKey }
   val chatSessionId: StateFlow<String?> = runtimeState(initial = null) { it.chatSessionId }
@@ -435,6 +438,10 @@ class MainViewModel(
 
   fun setTalkModeEnabled(enabled: Boolean) {
     ensureRuntime().setTalkModeEnabled(enabled)
+  }
+
+  fun setVoiceWakeEnabled(enabled: Boolean) {
+    ensureRuntime().setVoiceWakeEnabled(enabled)
   }
 
   fun setSpeakerEnabled(enabled: Boolean) {

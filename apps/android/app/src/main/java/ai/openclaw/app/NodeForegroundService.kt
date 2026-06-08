@@ -24,6 +24,7 @@ class NodeForegroundService : Service() {
   private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
   private var notificationJob: Job? = null
   private var voiceCaptureMode = VoiceCaptureMode.Off
+  private var wakeActive = false
 
   override fun onCreate() {
     super.onCreate()
@@ -115,6 +116,16 @@ class NodeForegroundService : Service() {
             ),
         )
       }
+      ACTION_SET_WAKE_ACTIVE -> {
+        wakeActive = intent.getBooleanExtra(EXTRA_WAKE_ACTIVE, false)
+        startForegroundWithTypes(
+          notification =
+            buildNotification(
+              title = "OpenClaw Node",
+              text = if (wakeActive) "Wake word listening" else "Connected",
+            ),
+        )
+      }
     }
     // Keep running; connection is managed by NodeRuntime (auto-reconnect + manual).
     return START_STICKY
@@ -181,7 +192,12 @@ class NodeForegroundService : Service() {
   }
 
   private fun startForegroundWithTypes(notification: Notification) {
-    val serviceTypes = foregroundServiceTypesForVoiceMode(voiceCaptureMode)
+    var serviceTypes = foregroundServiceTypesForVoiceMode(voiceCaptureMode)
+    if (wakeActive) {
+      // Background wake-word listening needs the microphone foreground-service type even when no
+      // Talk/dictation capture is active.
+      serviceTypes = serviceTypes or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+    }
     ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceTypes)
   }
 
@@ -192,6 +208,8 @@ class NodeForegroundService : Service() {
     private const val ACTION_STOP = "ai.openclaw.app.action.STOP"
     private const val ACTION_SET_VOICE_CAPTURE_MODE = "ai.openclaw.app.action.SET_VOICE_CAPTURE_MODE"
     private const val EXTRA_VOICE_CAPTURE_MODE = "ai.openclaw.app.extra.VOICE_CAPTURE_MODE"
+    private const val ACTION_SET_WAKE_ACTIVE = "ai.openclaw.app.action.SET_WAKE_ACTIVE"
+    private const val EXTRA_WAKE_ACTIVE = "ai.openclaw.app.extra.WAKE_ACTIVE"
 
     fun start(context: Context) {
       val intent = Intent(context, NodeForegroundService::class.java)
@@ -213,6 +231,22 @@ class NodeForegroundService : Service() {
           .putExtra(EXTRA_VOICE_CAPTURE_MODE, mode.name)
       if (mode == VoiceCaptureMode.TalkMode) {
         // Microphone foreground service type must be declared before Talk capture starts.
+        ContextCompat.startForegroundService(context, intent)
+      } else {
+        context.startService(intent)
+      }
+    }
+
+    fun setWakeActive(
+      context: Context,
+      active: Boolean,
+    ) {
+      val intent =
+        Intent(context, NodeForegroundService::class.java)
+          .setAction(ACTION_SET_WAKE_ACTIVE)
+          .putExtra(EXTRA_WAKE_ACTIVE, active)
+      if (active) {
+        // Microphone foreground service type must be declared before background wake capture starts.
         ContextCompat.startForegroundService(context, intent)
       } else {
         context.startService(intent)

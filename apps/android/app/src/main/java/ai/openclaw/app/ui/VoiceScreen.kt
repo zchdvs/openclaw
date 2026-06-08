@@ -99,6 +99,8 @@ fun VoiceScreen(
   val talkModeSpeaking by viewModel.talkModeSpeaking.collectAsState()
   val talkModeStatusText by viewModel.talkModeStatusText.collectAsState()
   val talkModeConversation by viewModel.talkModeConversation.collectAsState()
+  val voiceWakeEnabled by viewModel.voiceWakeEnabled.collectAsState()
+  val voiceWakeStatusText by viewModel.voiceWakeStatusText.collectAsState()
 
   var pendingAction by remember { mutableStateOf<VoiceAction?>(null) }
   var hasMicPermission by remember { mutableStateOf(context.hasRecordAudioPermission()) }
@@ -109,6 +111,7 @@ fun VoiceScreen(
         when (pendingAction) {
           VoiceAction.Talk -> viewModel.setTalkModeEnabled(true)
           VoiceAction.Dictation -> viewModel.setMicEnabled(true)
+          VoiceAction.WakeWord -> viewModel.setVoiceWakeEnabled(true)
           null -> Unit
         }
       }
@@ -197,6 +200,8 @@ fun VoiceScreen(
       micLiveTranscript = micLiveTranscript,
       gatewayReady = gatewayReady,
       voiceAttentionStatus = voiceAttentionStatus,
+      voiceWakeEnabled = voiceWakeEnabled,
+      voiceWakeStatusText = voiceWakeStatusText,
       onStartTalk = {
         runVoiceAction(
           action = VoiceAction.Talk,
@@ -218,6 +223,17 @@ fun VoiceScreen(
             requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
           },
           run = { viewModel.setMicEnabled(!micEnabled) },
+        )
+      },
+      onToggleWake = {
+        runVoiceAction(
+          action = VoiceAction.WakeWord,
+          hasMicPermission = hasMicPermission,
+          requestPermission = {
+            pendingAction = VoiceAction.WakeWord
+            requestMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+          },
+          run = { viewModel.setVoiceWakeEnabled(!voiceWakeEnabled) },
         )
       },
       onConnectGateway = onOpenGatewaySettings,
@@ -619,8 +635,11 @@ private fun VoiceHero(
   micLiveTranscript: String?,
   gatewayReady: Boolean,
   voiceAttentionStatus: String?,
+  voiceWakeEnabled: Boolean,
+  voiceWakeStatusText: String,
   onStartTalk: () -> Unit,
   onStartDictation: () -> Unit,
+  onToggleWake: () -> Unit,
   onConnectGateway: () -> Unit,
 ) {
   Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -695,6 +714,13 @@ private fun VoiceHero(
         icon = if (micEnabled) Icons.Default.MicOff else Icons.Default.TextFields,
         onClick = onStartDictation,
         enabled = gatewayReady || micEnabled,
+      )
+      VoiceModeRow(
+        title = if (voiceWakeEnabled) "Wake Word On" else "Wake Word",
+        subtitle =
+          if (voiceWakeEnabled) voiceWakeStatusText else "Always listening for your trigger phrase",
+        icon = if (voiceWakeEnabled) Icons.Default.Mic else Icons.Default.GraphicEq,
+        onClick = onToggleWake,
       )
     }
 
@@ -1004,6 +1030,7 @@ private fun VoicePermissionPanel(onRequestPermission: () -> Unit) {
 private enum class VoiceAction {
   Talk,
   Dictation,
+  WakeWord,
 }
 
 private fun runVoiceAction(

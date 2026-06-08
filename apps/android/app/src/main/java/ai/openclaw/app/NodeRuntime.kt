@@ -710,9 +710,9 @@ class NodeRuntime(
   val voiceWakeStatusText: StateFlow<String>
     get() = voiceWake.statusText
 
-  /** Enables foreground wake-word listening (or disables it) and persists the choice. */
+  /** Enables always-on wake-word listening (or disables it) and persists the choice. */
   fun setVoiceWakeEnabled(value: Boolean) {
-    prefs.setVoiceWakeMode(if (value) VoiceWakeMode.Foreground else VoiceWakeMode.Off)
+    prefs.setVoiceWakeMode(if (value) VoiceWakeMode.Always else VoiceWakeMode.Off)
     _voiceWakeEnabled.value = value
     if (value) gatewayEventHandler.scheduleWakeWordsSyncIfNeeded()
     refreshVoiceWakeListening()
@@ -720,20 +720,26 @@ class NodeRuntime(
 
   /**
    * Starts or stops wake-word listening based on the saved mode, foreground state, the active
-   * capture mode, and microphone permission. Wake listening pauses whenever Talk or dictation hold
-   * the microphone so the two recognizers do not fight over the audio tap.
+   * capture mode, and microphone permission. `Always` keeps listening in the background and promotes
+   * the foreground service to the microphone type; `Foreground` only listens while the app is
+   * visible. Wake listening always pauses while Talk or dictation hold the microphone so the two
+   * recognizers do not fight over the audio tap.
    */
   private fun refreshVoiceWakeListening() {
+    val mode = prefs.voiceWakeMode.value
     val shouldListen =
-      prefs.voiceWakeMode.value != VoiceWakeMode.Off &&
-        _isForeground.value &&
+      mode != VoiceWakeMode.Off &&
         _voiceCaptureMode.value == VoiceCaptureMode.Off &&
+        (mode == VoiceWakeMode.Always || _isForeground.value) &&
         hasRecordAudioPermission()
     if (shouldListen) {
+      // Declare the microphone foreground-service type before capture when listening in background.
+      NodeForegroundService.setWakeActive(appContext, mode == VoiceWakeMode.Always)
       voiceWake.setTriggerWords(prefs.wakeWords.value)
       voiceWake.start()
     } else {
       voiceWake.stop()
+      NodeForegroundService.setWakeActive(appContext, false)
     }
   }
 

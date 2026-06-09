@@ -138,7 +138,9 @@ class VoiceWakeManager(
       override fun onBufferReceived(buffer: ByteArray?) {}
 
       override fun onEndOfSpeech() {
-        scheduleRestart()
+        // Don't restart here. Restarting calls recognizer.cancel(), which would abort the pending
+        // final transcript before onResults delivers it — dropping the command. Let onResults (on
+        // success) or onError (on timeout/no-match) drive the next listen cycle instead.
       }
 
       override fun onError(error: Int) {

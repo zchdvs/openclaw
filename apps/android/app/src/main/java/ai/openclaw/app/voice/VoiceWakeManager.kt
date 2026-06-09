@@ -171,8 +171,9 @@ class VoiceWakeManager(
       }
 
       override fun onPartialResults(partialResults: Bundle?) {
-        val list = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-        list.firstOrNull()?.let(::handleTranscription)
+        // Intentionally do NOT dispatch on partial results. Partials stream as the phrase grows
+        // ("who" -> "who are" -> "who are you"), and each distinct prefix would fire a separate
+        // command. Only the final transcript (onResults) dispatches, giving one command per utterance.
       }
 
       override fun onEvent(

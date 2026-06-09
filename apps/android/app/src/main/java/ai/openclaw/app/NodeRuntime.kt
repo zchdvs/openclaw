@@ -714,7 +714,10 @@ class NodeRuntime(
   fun setVoiceWakeEnabled(value: Boolean) {
     prefs.setVoiceWakeMode(if (value) VoiceWakeMode.Always else VoiceWakeMode.Off)
     _voiceWakeEnabled.value = value
-    if (value) gatewayEventHandler.scheduleWakeWordsSyncIfNeeded()
+    // Do NOT push the local trigger list to the gateway here. Toggling the feature is not an edit of
+    // the words, and the local list may be stale defaults that would clobber the gateway's list.
+    // Trigger words flow gateway -> node (voicewake.get on connect, voicewake.changed broadcast);
+    // a future on-device editor should call scheduleWakeWordsSyncIfNeeded() itself.
     refreshVoiceWakeListening()
   }
 
